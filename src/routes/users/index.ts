@@ -43,7 +43,7 @@ const plugin: FastifyPluginAsyncJsonSchemaToTs = async (
       },
     },
     async function (request, reply): Promise<UserEntity> {      
-      const body = request.body;
+      const body = request.body;      
       return await fastify.db.users.create(body);
     }
   );
