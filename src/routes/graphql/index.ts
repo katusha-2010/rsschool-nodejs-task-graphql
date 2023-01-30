@@ -1,6 +1,6 @@
 import { FastifyPluginAsyncJsonSchemaToTs } from '@fastify/type-provider-json-schema-to-ts';
 import { graphqlBodySchema } from './schema';
-import { graphql, buildSchema, GraphQLSchema } from 'graphql';
+import { graphql, buildSchema} from 'graphql';
 import { PostEntity } from '../../utils/DB/entities/DBPosts';
 import { MemberTypeEntity } from '../../utils/DB/entities/DBMemberTypes';
 import { ProfileEntity } from '../../utils/DB/entities/DBProfiles';
@@ -75,6 +75,30 @@ const plugin: FastifyPluginAsyncJsonSchemaToTs = async (
         memberType: MemberTypeEntity
       }
 
+      type UsersSubscribedTo {
+        id: String
+        firstName: String
+        lastName: String
+        email: String
+        subscribedToUserIds: [String]
+        usersSubscribedTo: [UserEntity]
+      }
+
+      type SubscribedToUser {
+        id: String
+        subscribedToUser: [String]
+        usersSubscribedTo: [UserEntity]
+      }
+
+      type usersWithAllSubscribedAndSubsctibers {
+        id: String
+        firstName: String
+        lastName: String
+        email: String
+        subscribedToUserIds: [SubscribedToUser]
+        usersSubscribedTo: [UsersSubscribedTo]
+      }
+
        type Query {
        users: [UserEntity]
        user(id: String!): UserEntity
@@ -88,6 +112,7 @@ const plugin: FastifyPluginAsyncJsonSchemaToTs = async (
        userAllFieldsByID(id: String!): UserAllFields
        usersWithUserSubscribedTo: [UserProfileSubscribers]
        userWithUserSubscribedToByID(id: String!): UserProfileSubscribers
+       usersWithAllSubscribedAndSubsctibers: [usersWithAllSubscribedAndSubsctibers]
        }
 
        input newUser {
@@ -96,8 +121,29 @@ const plugin: FastifyPluginAsyncJsonSchemaToTs = async (
         email: String!
        }
 
+      input newProfile {
+        id: String!
+        avatar: String
+        sex: String
+        birthday: Int
+        country: String
+        street: String
+        city: String
+        memberTypeId: String
+        userId: String
+       }
+
+      input newPost {
+        id: String!
+        title: String
+        content: String
+        userId: String
+       }
+
        type Mutation {
         createNewUser(input: newUser!): UserEntity
+        createNewProfile(input: newProfile!): ProfileEntity
+        createNewPost(input: newPost!): PostEntity
        }
       `);
 
@@ -172,9 +218,58 @@ const plugin: FastifyPluginAsyncJsonSchemaToTs = async (
           return profile? Object.assign(user, {profile,usersSubscribedTo}) : Object.assign(user, {usersSubscribedTo})
         },
 
+        usersWithAllSubscribedAndSubsctibers: async(id:string) => {
+          const users:UserEntity[] = await fastify.db.users.findMany();
+          const resultArr = users.map(async(user) => {
+            const usersSubscribedTo1:UserEntity[] = await fastify.db.users.findMany({key:"subscribedToUserIds", inArray:user.id});
+            const subscribedToUser1:string[] = user.subscribedToUserIds;
+            const subscribedToUserWide = subscribedToUser1.map(async(el) => {
+              const user = await fastify.db.users.findOne({key:"id", equals:el});
+              const usersSubscribedTo:UserEntity[] = await fastify.db.users.findMany({key:"subscribedToUserIds", inArray:el});
+              return {id:el, subscribedToUser: user?.subscribedToUserIds, usersSubscribedTo}
+            })
+            const usersSubscribedToWide = usersSubscribedTo1.map(async(user) => {
+              const usersSubscribedTo:UserEntity[] = await fastify.db.users.findMany({key:"subscribedToUserIds", inArray:user.id});
+              return Object.assign(user, {usersSubscribedTo})
+            })
+            
+            return Object.assign(user, {subscribedToUser:subscribedToUserWide,usersSubscribedTo:usersSubscribedToWide})
+          })
+          return resultArr;
+        },
+
         createNewUser: async({input}:any) => {
           return await fastify.db.users.create(input);
-        }
+        },
+
+        createNewProfile: async({input}:any) => {
+          const {userId, memberTypeId} = input;
+          const usersArr:UserEntity[] = await fastify.db.users.findMany();
+          const profilesArr:ProfileEntity[] = await fastify.db.profiles.findMany();
+          const memberTypeArr:MemberTypeEntity[] = await fastify.db.memberTypes.findMany();
+          const isUserExist:boolean = usersArr.find(el => el.id === userId)? true : false;
+          const isProfileExistForUser:boolean = profilesArr.find(el => el.userId === userId)? true : false;
+          const isMemberTypeExist:boolean = memberTypeArr.find(el => el.id === memberTypeId)? true : false;
+          if(!isUserExist) {
+            return fastify.httpErrors.badRequest();
+          }
+          if(isProfileExistForUser) {
+            return fastify.httpErrors.badRequest();
+          }
+          if(!isMemberTypeExist) {
+            return fastify.httpErrors.badRequest();
+          }
+          return await fastify.db.profiles.create(input);
+        },
+
+        createNewPost: async({input}:any) => {
+          const {content, title} = input;
+          if(!content || !title) {
+            return fastify.httpErrors.badRequest();
+          } else {
+            return await fastify.db.posts.create(input);
+          }
+        },
       };
     
       return await graphql({schema, source, rootValue});      
